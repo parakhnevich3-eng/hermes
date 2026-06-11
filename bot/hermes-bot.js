@@ -14,6 +14,8 @@ const deepseekBaseUrl = (
 const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
 const perplexityModel = process.env.PERPLEXITY_MODEL || 'sonar-pro';
 const perplexityBaseUrl = 'https://api.perplexity.ai';
+const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+const firecrawlBaseUrl = 'https://api.firecrawl.dev';
 const githubToken = process.env.GITHUB_TOKEN;
 const githubBaseUrl = 'https://api.github.com';
 const deepseekThinkingEnabled = ['1', 'true', 'yes'].includes(
@@ -1085,6 +1087,7 @@ bot.help(async ctx => {
       '/ping - проверить, что бот живой',
       '/reset - очистить память этого чата',
       '/web <запрос> - поиск в интернете через Perplexity (с источниками)',
+      '/scrape <url> - скрапить страницу и получить её содержимое',
       '/myrepos - твои репозитории на GitHub',
       '/myissues - твои открытые issues',
       '/myprs - твои открытые pull requests',
@@ -1141,6 +1144,66 @@ bot.command('provider', async ctx => {
     ? `Perplexity AI (${perplexityModel})`
     : `DeepSeek (${deepseekModel})`;
   await reply(ctx, `Переключено на ${label}. История чата очищена.`);
+});
+
+async function firecrawlScrape(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const response = await fetch(`${firecrawlBaseUrl}/v1/scrape`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${firecrawlApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url, formats: ['markdown'] }),
+      signal: controller.signal,
+    });
+
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Firecrawl API ${response.status}: ${text}`);
+
+    const payload = JSON.parse(text);
+    const markdown = payload?.data?.markdown?.trim();
+    const title = payload?.data?.metadata?.title || '';
+
+    if (!markdown) throw new Error('Firecrawl вернул пустой контент.');
+
+    return { markdown, title };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+bot.command('scrape', async ctx => {
+  const url = ctx.message.text.replace(/^\/scrape\s*/i, '').trim();
+
+  if (!url) {
+    await reply(ctx, 'Укажи URL после команды.\nНапример: /scrape https://example.com');
+    return;
+  }
+
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    await reply(ctx, 'Укажи полный URL с https://\nНапример: /scrape https://example.com');
+    return;
+  }
+
+  if (!firecrawlApiKey) {
+    await reply(ctx, 'FIRECRAWL_API_KEY не настроен. Добавьте ключ в .env и перезапустите бота.');
+    return;
+  }
+
+  await sendChatAction(ctx, 'typing');
+
+  try {
+    const { markdown, title } = await firecrawlScrape(url);
+    const header = title ? `${title}\n${url}\n${'─'.repeat(30)}\n\n` : `${url}\n${'─'.repeat(30)}\n\n`;
+    await replyLong(ctx, header + markdown);
+  } catch (error) {
+    console.error('Firecrawl /scrape failed:', error);
+    await reply(ctx, `Не удалось получить страницу: ${error.message}`);
+  }
 });
 
 bot.command('web', async ctx => {
