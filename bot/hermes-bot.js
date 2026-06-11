@@ -411,10 +411,20 @@ function buildSystemPrompt(chatId) {
     ? `Я работаю через Perplexity AI API, модель: ${perplexityModel}. Я не Claude и не модель Anthropic.`
     : `Я работаю через DeepSeek API, модель: ${deepseekModel}. Я не Claude и не модель Anthropic.`;
 
+  const tools = [
+    'Инструменты Гермеса (встроенные команды):',
+    '/web <запрос> — поиск в интернете через Perplexity AI с источниками;',
+    `/scrape <url> — скрапинг любой веб-страницы через Firecrawl API (${firecrawlApiKey ? 'подключён' : 'не настроен'});`,
+    '/myrepos, /myissues, /myprs — GitHub интеграция (личные репозитории и задачи);',
+    '/repo, /issues, /pr — публичные GitHub репозитории.',
+    'Если пользователь спрашивает о Firecrawl, веб-скрапинге или подключении к сервисам — отвечай на основе этих данных, не говори что ты не можешь делать запросы.',
+  ].join(' ');
+
   const base = [
     'Ты Гермес, дружелюбный Telegram-помощник.',
     'Гермес - это имя продукта, а не роль: не отыгрывай мифологического персонажа и не используй обращения вроде "смертный".',
     identity,
+    tools,
     'Если пользователь спрашивает, какая ты модель или кто под капотом, отвечай именно этой информацией.',
     'Никогда не называй себя Claude, Anthropic, ChatGPT или OpenAI-моделью.',
     'Отвечай по-русски, если пользователь не попросил другой язык.',
@@ -1278,11 +1288,11 @@ bot.command('health', async ctx => {
       'Гермес жив.',
       '',
       `Telegram: polling`,
-      `DeepSeek: подключен`,
-      `Модель: ${deepseekModel}`,
-      `Режим рассуждений: ${
-        deepseekThinkingEnabled ? 'включен' : 'выключен, обычные ответы'
-      }`,
+      `DeepSeek: подключен · модель ${deepseekModel}`,
+      `Режим рассуждений: ${deepseekThinkingEnabled ? 'включен' : 'выключен'}`,
+      `Perplexity: ${perplexityApiKey ? `подключен · ${perplexityModel}` : 'не настроен'}`,
+      `Firecrawl: ${firecrawlApiKey ? 'подключен · /scrape доступен' : 'не настроен'}`,
+      `GitHub: ${githubToken ? 'подключен · /myrepos /myissues /myprs' : 'без токена (только публичные repo)'}`,
       `Профиль: ${getProfile(ctx.chat.id) ? 'настроен' : 'не настроен'}`,
     ].join('\n'),
   );
