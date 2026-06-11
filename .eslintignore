@@ -1,0 +1,6 @@
+delivery-*.js
+delivery-*.html
+delivery-*.json
+.bundle/
+data/
+logs/

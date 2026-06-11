@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Перчини Сургут - мобильное приложение</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="phone">
+      <header class="hero">
+        <div class="hero__top">
+          <div>
+            <img
+              class="brand-logo"
+              src="../assets/perchini-brand/logo-w.svg"
+              alt="Перчини"
+            />
+            <div class="address">Сургут, Проспект Ленина 17, ТЦ «Рандеву»</div>
+          </div>
+          <span class="online">Online</span>
+        </div>
+        <div class="metrics">
+          <div><span>Доставка</span><strong>35-55 мин</strong></div>
+          <div><span>Самовывоз</span><strong>15 мин</strong></div>
+          <div><span>Телефон</span><strong>390-039</strong></div>
+        </div>
+      </header>
+
+      <section class="tabs" aria-label="Разделы">
+        <button class="tab is-active" data-screen="menu">Меню</button>
+        <button class="tab" data-screen="cart">
+          Корзина <span id="cart-count">2</span>
+        </button>
+        <button class="tab" data-screen="loyalty">Лояльность</button>
+        <button class="tab" data-screen="systems">Системы</button>
+      </section>
+
+      <section class="screen is-active" id="screen-menu">
+        <div class="screen-title">
+          <div>
+            <h1>Основное меню</h1>
+            <p>Доставка Perchini, Сургут, Проспект Ленина 17</p>
+          </div>
+          <div class="mode">
+            <button class="is-active" data-mode="list">Список</button>
+            <button data-mode="grid">Сетка</button>
+          </div>
+        </div>
+
+        <input class="search" id="search" placeholder="Поиск по меню" />
+        <div class="categories" id="categories"></div>
+        <div class="source" id="source"></div>
+        <div class="products list" id="products"></div>
+      </section>
+
+      <section class="screen" id="screen-cart">
+        <div class="screen-title">
+          <div>
+            <h1>Быстрый заказ</h1>
+            <p>Оплата онлайн, доставка и допродажи</p>
+          </div>
+        </div>
+        <div class="order-mode">
+          <button class="is-active" data-order="delivery">Доставка</button>
+          <button data-order="pickup">Самовывоз</button>
+        </div>
+        <div class="cart-list" id="cart-list"></div>
+        <div class="summary" id="summary"></div>
+        <h2>Умные допродажи</h2>
+        <div class="upsells" id="upsells"></div>
+      </section>
+
+      <section class="screen" id="screen-loyalty">
+        <div class="screen-title">
+          <div>
+            <h1>Лояльность и отзывы</h1>
+            <p>Бонусы, история заказов, возврат гостей</p>
+          </div>
+        </div>
+        <div class="bonus">
+          <span>Баланс</span>
+          <strong>1 240 бонусов</strong>
+          <p>Можно списать до 30% заказа</p>
+        </div>
+        <div class="cards">
+          <article>
+            <span>Пуши</span><strong>3 сценария</strong>
+            <p>День рождения, забытая корзина, новое меню</p>
+          </article>
+          <article>
+            <span>Отзывы</span><strong>4.8</strong>
+            <p>Оценка заказа после доставки</p>
+          </article>
+          <article>
+            <span>История</span><strong>12 заказов</strong>
+            <p>Повторить любимый заказ за один тап</p>
+          </article>
+          <article>
+            <span>Акции</span><strong>2 активны</strong>
+            <p>Паста + напиток, десерт за бонусы</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-systems">
+        <div class="screen-title">
+          <div>
+            <h1>Касса и каналы продаж</h1>
+            <p>Синхронизация меню, заказов и стоп-листов</p>
+          </div>
+        </div>
+        <div class="system-status">
+          <strong>Кухня принимает заказы</strong>
+          <span>Последняя синхронизация меню: 04.06.2026</span>
+        </div>
+        <div class="cards">
+          <article>
+            <span>Кассовое ПО</span><strong>Подключено</strong>
+            <p>Меню, клиенты, заказы, статусы кухни</p>
+          </article>
+          <article>
+            <span>Стоп-листы</span><strong>Онлайн</strong>
+            <p>Позиции скрываются по наличию и времени</p>
+          </article>
+          <article>
+            <span>Сайт</span><strong>Продажи</strong>
+            <p>SEO, акции, онлайн-оплата без агрегаторов</p>
+          </article>
+          <article>
+            <span>VK Mini App</span><strong>Готово</strong>
+            <p>Заказы во ВКонтакте без установки приложения</p>
+          </article>
+          <article>
+            <span>QR-меню</span><strong>Активно</strong>
+            <p>Цифровой каталог для гостей в зале</p>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="./delivery-menu-data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
