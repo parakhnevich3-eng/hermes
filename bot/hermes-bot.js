@@ -2,6 +2,7 @@ require('dotenv').config({ quiet: true });
 
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { inspect } = require('util');
 const { Telegraf } = require('telegraf');
 
@@ -14,6 +15,20 @@ const deepseekBaseUrl = (
 const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
 const perplexityModel = process.env.PERPLEXITY_MODEL || 'sonar-pro';
 const perplexityBaseUrl = 'https://api.perplexity.ai';
+const openrouterApiKey = process.env.OPENROUTER_API_KEY;
+const openrouterModel    = process.env.OPENROUTER_MODEL    || 'deepseek/deepseek-v4-pro';
+const minimaxModel       = process.env.MINIMAX_MODEL       || 'minimax/minimax-01';
+const claudeModel        = process.env.CLAUDE_MODEL        || 'anthropic/claude-sonnet-4-5';
+const geminiModel        = process.env.GEMINI_MODEL        || 'google/gemini-2.5-pro-preview';
+const grokModel          = process.env.GROK_MODEL          || 'x-ai/grok-3';
+const qwenCoderModel     = process.env.QWEN_CODER_MODEL    || 'qwen/qwen-2.5-coder-32b-instruct';
+const deepseekR1Model    = process.env.DEEPSEEK_R1_MODEL   || 'deepseek/deepseek-r1';
+const openrouterBaseUrl  = 'https://openrouter.ai/api/v1';
+const replicateApiKey  = process.env.REPLICATE_API_KEY;
+const imageModel       = process.env.IMAGE_MODEL   || 'black-forest-labs/flux-1.1-pro-ultra';
+const videoModel       = process.env.VIDEO_MODEL   || 'minimax/video-01';
+const animateModel     = process.env.ANIMATE_MODEL || 'luma/ray-3.2';
+const replicateBaseUrl = 'https://api.replicate.com/v1';
 const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
 const firecrawlBaseUrl = 'https://api.firecrawl.dev';
 const githubToken = process.env.GITHUB_TOKEN;
@@ -32,6 +47,8 @@ const allowedUserIds = (process.env.TELEGRAM_ALLOWED_USER_IDS || '')
 const histories = new Map();
 const onboardingStates = new Map();
 const chatProviders = new Map();
+const chatAutoMode = new Map();
+const lastPhotos = new Map(); // chatId → photo array (last received)
 const telegramOutbox = [];
 let telegramOutboxTimer = null;
 const maxHistoryMessages = 12;
@@ -57,6 +74,32 @@ const PRICING = {
     'deepseek-v3':        { input: 0.27e-6, output: 1.10e-6 },
     'deepseek-v4-pro':    { input: 0.27e-6, output: 1.10e-6 },
   },
+  openrouter: {
+    'deepseek/deepseek-v4-pro':             { input: 0.27e-6, output: 1.10e-6 },
+    'nousresearch/hermes-3-llama-3.1-405b': { input: 0.8e-6,  output: 0.8e-6  },
+    'nousresearch/hermes-3-llama-3.1-70b':  { input: 0.1e-6,  output: 0.1e-6  },
+  },
+  minimax: {
+    'minimax/minimax-01':      { input: 0.2e-6,  output: 1.1e-6  },
+    'minimax/minimax-text-01': { input: 0.2e-6,  output: 1.1e-6  },
+  },
+  claude: {
+    'anthropic/claude-sonnet-4-5': { input: 3e-6,   output: 15e-6  },
+    'anthropic/claude-opus-4':     { input: 15e-6,  output: 75e-6  },
+    'anthropic/claude-haiku-4-5':  { input: 0.8e-6, output: 4e-6   },
+  },
+  gemini: {
+    'google/gemini-3.5-flash-20260519': { input: 0.15e-6, output: 0.6e-6 },
+  },
+  grok: {
+    'x-ai/grok-4.20-20260309': { input: 3e-6, output: 15e-6 },
+  },
+  'qwen-coder': {
+    'qwen/qwen3.5-plus-20260420': { input: 0.5e-6, output: 1.5e-6 },
+  },
+  'deepseek-r1': {
+    'qwen/qwen3.7-max': { input: 1.0e-6, output: 3.0e-6 },
+  },
 };
 const dataDir = path.join(__dirname, '..', 'data');
 const logsDir = path.join(__dirname, '..', 'logs');
@@ -68,8 +111,10 @@ const profiles = loadProfiles();
 loadTelegramOutbox();
 const spending = loadSpending();
 let shuttingDown = false;
+const defaultProvider = openrouterApiKey ? 'openrouter' : 'deepseek';
+
 function getChatProvider(chatId) {
-  return chatProviders.get(chatId) || 'deepseek';
+  return chatProviders.get(chatId) || defaultProvider;
 }
 
 function setChatProvider(chatId, provider) {
@@ -407,9 +452,18 @@ function saveProfile(chatId, profile) {
 
 function buildSystemPrompt(chatId) {
   const provider = getChatProvider(chatId);
-  const identity = provider === 'perplexity'
-    ? `Я работаю через Perplexity AI API, модель: ${perplexityModel}. Я не Claude и не модель Anthropic.`
-    : `Я работаю через DeepSeek API, модель: ${deepseekModel}. Я не Claude и не модель Anthropic.`;
+  const identity =
+    provider === 'perplexity'
+      ? `Я работаю через Perplexity AI API, модель: ${perplexityModel}. Я не Claude и не модель Anthropic.`
+      : provider === 'openrouter'
+        ? `Я работаю через OpenRouter API, модель: ${openrouterModel}. Я не Claude и не модель Anthropic.`
+        : provider === 'minimax'      ? `Я работаю через OpenRouter API, модель: ${minimaxModel}.`
+        : provider === 'claude'       ? `Я работаю через OpenRouter API, модель: ${claudeModel}.`
+        : provider === 'gemini'       ? `Я работаю через OpenRouter API, модель: ${geminiModel}.`
+        : provider === 'grok'         ? `Я работаю через OpenRouter API, модель: ${grokModel}.`
+        : provider === 'qwen-coder'   ? `Я работаю через OpenRouter API, модель: ${qwenCoderModel}. Я специализируюсь на коде.`
+        : provider === 'deepseek-r1'  ? `Я работаю через OpenRouter API, модель: ${deepseekR1Model}. Я специализируюсь на анализе и отладке кода.`
+        : `Я работаю через DeepSeek API, модель: ${deepseekModel}. Я не Claude и не модель Anthropic.`;
 
   const tools = [
     'Инструменты Гермеса (встроенные команды):',
@@ -659,6 +713,46 @@ function formatModelInfo(chatId) {
       'Переключиться: /provider',
     ].join('\n');
   }
+  if (provider === 'openrouter') {
+    return [
+      'Модель Гермеса:',
+      '',
+      'Провайдер: OpenRouter',
+      `Model ID: ${openrouterModel}`,
+      `Endpoint: ${openrouterBaseUrl}`,
+      '',
+      'Переключиться: /provider',
+    ].join('\n');
+  }
+  if (provider === 'minimax') {
+    return [
+      'Модель Гермеса:',
+      '',
+      'Провайдер: OpenRouter / MiniMax',
+      `Model ID: ${minimaxModel}`,
+      `Endpoint: ${openrouterBaseUrl}`,
+      '',
+      'Переключиться: /provider',
+    ].join('\n');
+  }
+  const orModels = {
+    claude:        { label: 'OpenRouter / Anthropic Claude', model: claudeModel },
+    gemini:        { label: 'OpenRouter / Google Gemini',    model: geminiModel },
+    grok:          { label: 'OpenRouter / xAI Grok',         model: grokModel },
+    'qwen-coder':  { label: 'OpenRouter / Qwen Coder',       model: qwenCoderModel },
+    'deepseek-r1': { label: 'OpenRouter / DeepSeek R1',      model: deepseekR1Model },
+  };
+  if (orModels[provider]) {
+    return [
+      'Модель Гермеса:',
+      '',
+      `Провайдер: ${orModels[provider].label}`,
+      `Model ID: ${orModels[provider].model}`,
+      `Endpoint: ${openrouterBaseUrl}`,
+      '',
+      'Переключиться: /provider',
+    ].join('\n');
+  }
   return [
     'Модель Гермеса:',
     '',
@@ -682,7 +776,12 @@ function isModelIdentityQuestion(message) {
     normalized.includes('claude') ||
     normalized.includes('anthropic') ||
     normalized.includes('deepseek') ||
-    normalized.includes('perplexity')
+    normalized.includes('perplexity') ||
+    normalized.includes('openrouter') ||
+    normalized.includes('open router') ||
+    normalized.includes('hermes') ||
+    normalized.includes('sonnet') ||
+    normalized.includes('minimax')
   );
 }
 
@@ -862,12 +961,152 @@ async function askPerplexity(chatId, userMessage) {
   return finalAnswer + buildCostFooter('perplexity', perplexityModel, inputTokens, outputTokens, costUsd);
 }
 
-async function askAI(chatId, userMessage) {
-  const provider = getChatProvider(chatId);
-  if (provider === 'perplexity') {
-    return askPerplexity(chatId, userMessage);
+async function askViaOpenRouter(chatId, userMessage, model, providerKey) {
+  const controller = new AbortController();
+  // Thinking models (gemini, deepseek-r1, qwen) need more time
+  const timeoutMs = ['gemini', 'deepseek-r1', 'qwen-coder'].includes(providerKey) ? 180000 : 120000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const messages = [
+    { role: 'system', content: buildSystemPrompt(chatId) },
+    ...getChatHistory(chatId),
+    { role: 'user', content: userMessage },
+  ];
+
+  try {
+    const response = await fetch(`${openrouterBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${openrouterApiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/hermes-bot',
+        'X-Title': 'Hermes Bot',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        max_tokens: providerKey === 'gemini'
+          ? Number(process.env.GEMINI_MAX_TOKENS || 8000)
+          : Number(process.env.DEEPSEEK_MAX_TOKENS || 2000),
+      }),
+      signal: controller.signal,
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) throw new Error(`${providerKey} (OpenRouter) ${response.status}: ${responseText}`);
+
+    const payload = JSON.parse(responseText);
+    const msg = payload?.choices?.[0]?.message;
+    // Thinking models (Gemini, Qwen) put output in reasoning when content is null
+    const answer = (msg?.content || msg?.reasoning || '').trim();
+    if (!answer) throw new Error(`${providerKey} вернул пустой ответ.`);
+
+    remember(chatId, userMessage, { role: 'assistant', content: answer });
+
+    const inputTokens = payload?.usage?.prompt_tokens || 0;
+    const outputTokens = payload?.usage?.completion_tokens || 0;
+    const costUsd = calcCost(providerKey, model, inputTokens, outputTokens);
+    if (costUsd != null) recordSpend(providerKey, model, inputTokens, outputTokens, costUsd);
+
+    return answer + buildCostFooter(providerKey, model, inputTokens, outputTokens, costUsd);
+  } finally {
+    clearTimeout(timeout);
   }
-  return askDeepSeek(chatId, userMessage);
+}
+
+const askOpenRouter  = (chatId, msg) => askViaOpenRouter(chatId, msg, openrouterModel, 'openrouter');
+const askMiniMax     = (chatId, msg) => askViaOpenRouter(chatId, msg, minimaxModel,    'minimax');
+const askClaude      = (chatId, msg) => askViaOpenRouter(chatId, msg, claudeModel,     'claude');
+const askGemini      = (chatId, msg) => askViaOpenRouter(chatId, msg, geminiModel,     'gemini');
+const askGrok        = (chatId, msg) => askViaOpenRouter(chatId, msg, grokModel,       'grok');
+const askQwenCoder   = (chatId, msg) => askViaOpenRouter(chatId, msg, qwenCoderModel,  'qwen-coder');
+const askDeepSeekR1  = (chatId, msg) => askViaOpenRouter(chatId, msg, deepseekR1Model, 'deepseek-r1');
+
+function detectProvider(message) {
+  const t = message.toLowerCase();
+
+  // 1. Поиск актуальной информации → Perplexity
+  // Срабатывает: "найди", "что сейчас стоит", "актуальные цены", "новости", "погугли"
+  if (/найди\b|поищи\b|погугли|что сейчас|актуальн|последние новости|в 2025|в 2026|сколько стоит|цены на|что у конкурент/.test(t)) {
+    return 'perplexity';
+  }
+
+  // 2. Длинное сообщение (>1500 символов) → MiniMax (1M контекст)
+  // Срабатывает: вставил целый документ, прайс, меню на утверждение
+  if (message.length > 1500) {
+    return 'minimax';
+  }
+
+  // 3. Код с блоками → Qwen Coder (если есть ```code``` в сообщении)
+  if (/```[\s\S]/.test(message)) {
+    // Если просят проверить/исправить блок кода — R1
+    if (/проверь|найди баг|почему|ошибк|не работает|исправь/.test(t)) return 'deepseek-r1';
+    return 'qwen-coder';
+  }
+
+  // 4. Написать код → Qwen Coder
+  // Срабатывает: "напиши скрипт", "сделай функцию", "создай компонент", "автоматизируй"
+  if (/напиши (код|скрипт|функци|класс|модул)|сделай скрипт|создай (функц|скрипт|компонент|интеграц)|автоматизируй|implement/.test(t)) {
+    return 'qwen-coder';
+  }
+
+  // 5. Отладка/ревью кода → DeepSeek R1
+  // Срабатывает: "проверь код", "найди баг", "почему не работает", "review"
+  if (/проверь код|найди баг|дебаг|ошибка в коде|почему не работает|review код|отладк|что не так с/.test(t)) {
+    return 'deepseek-r1';
+  }
+
+  // 6. Длинные документы / таблицы → MiniMax
+  // Срабатывает: "вот документ", "таблица", "полный отчёт", "весь файл"
+  if (/вот документ|весь файл|полный отчёт|таблиц|прайс-лист|большой текст/.test(t)) {
+    return 'minimax';
+  }
+
+  // 7. Соцсети / вирусный контент → Grok
+  // Срабатывает: посты для инсты/тг, reels, сторис, мемы, вирусный
+  if (/инстаграм|instagram|reels|сторис|stories|пост для тг|пост в тг|тикток|tiktok|вирусн|мем\b|smm|контент для соцсет/.test(t)) {
+    return 'grok';
+  }
+
+  // 8. Маркетинговые тексты / копирайтинг → Claude
+  // Срабатывает: реклама, слоган, оффер, акция, описание блюда, email-рассылка
+  if (/реклам|объявлени|слоган|оффер|продающ|текст для|описани блюд|текст меню|акци\b|скидк|лендинг|landing|email.рассылк|письмо клиент|баннер/.test(t)) {
+    return 'claude';
+  }
+
+  // 9. Стратегия / аналитика → Gemini
+  // Срабатывает: маркетинг-план, анализ конкурентов, целевая аудитория, KPI
+  if (/стратег|маркетинг.план|контент.план|анализ рынка|целевая аудитор|сегментац|позиционирован|конкурент|kpi|метрик|аналитик рынк|исследовани/.test(t)) {
+    return 'gemini';
+  }
+
+  return defaultProvider;
+}
+
+async function askAI(chatId, userMessage) {
+  let provider;
+  let autoLabel = '';
+
+  if (chatAutoMode.get(chatId)) {
+    provider = detectProvider(userMessage);
+    autoLabel = `\n[авто: ${provider}]`;
+  } else {
+    provider = getChatProvider(chatId);
+  }
+
+  const dispatch = {
+    perplexity:    () => askPerplexity(chatId, userMessage),
+    openrouter:    () => askOpenRouter(chatId, userMessage),
+    minimax:       () => askMiniMax(chatId, userMessage),
+    claude:        () => askClaude(chatId, userMessage),
+    gemini:        () => askGemini(chatId, userMessage),
+    grok:          () => askGrok(chatId, userMessage),
+    'qwen-coder':  () => askQwenCoder(chatId, userMessage),
+    'deepseek-r1': () => askDeepSeekR1(chatId, userMessage),
+  };
+
+  const fn = dispatch[provider] || (() => askDeepSeek(chatId, userMessage));
+  const result = await fn();
+  return autoLabel ? result + autoLabel : result;
 }
 
 async function replyLong(ctx, text) {
@@ -1072,14 +1311,23 @@ bot.start(async ctx => {
   }
 
   const provider = getChatProvider(ctx.chat.id);
-  const modelLabel = provider === 'perplexity' ? perplexityModel : deepseekModel;
-  const providerLabel = provider === 'perplexity' ? 'Perplexity AI' : 'DeepSeek';
+  const providerLabels = {
+    deepseek:      `DeepSeek (${deepseekModel})`,
+    openrouter:    `OpenRouter / DeepSeek (${openrouterModel})`,
+    minimax:       `MiniMax M3 (${minimaxModel})`,
+    claude:        `Claude Sonnet (${claudeModel})`,
+    gemini:        `Google Gemini (${geminiModel})`,
+    grok:          `xAI Grok (${grokModel})`,
+    'qwen-coder':  `Qwen Coder (${qwenCoderModel})`,
+    'deepseek-r1': `DeepSeek R1 (${deepseekR1Model})`,
+    perplexity:    `Perplexity AI (${perplexityModel})`,
+  };
   await reply(
     ctx,
     [
       'Гермес на связи.',
       '',
-      `Сейчас я отвечаю через ${providerLabel} (${modelLabel}).`,
+      `Сейчас я отвечаю через ${providerLabels[provider] || provider}.`,
       'Профиль уже настроен. Команды: /help, /ping, /reset, /provider, /profile, /model, /onboarding, /whoami.',
     ].join('\n'),
   );
@@ -1087,15 +1335,22 @@ bot.start(async ctx => {
 
 bot.help(async ctx => {
   const provider = getChatProvider(ctx.chat.id);
-  const modelLabel = provider === 'perplexity' ? perplexityModel : deepseekModel;
+  const modelLabels = {
+    deepseek: deepseekModel,
+    openrouter: openrouterModel,
+    perplexity: perplexityModel,
+  };
   await reply(
     ctx,
     [
-      `Гермес сейчас работает как Telegram-бот на ${modelLabel}.`,
+      `Гермес сейчас работает как Telegram-бот на ${modelLabels[provider] || provider}.`,
       '',
       '/start - начать',
       '/ping - проверить, что бот живой',
       '/reset - очистить память этого чата',
+      '/image <описание> - сгенерировать изображение (FLUX 1.1 Pro Ultra)',
+      '/video <описание> - сгенерировать видео (MiniMax Video-01)',
+      '/animate [описание] - оживить фото (ответь на фото этой командой)',
       '/web <запрос> - поиск в интернете через Perplexity (с источниками)',
       '/scrape <url> - скрапить страницу и получить её содержимое',
       '/myrepos - твои репозитории на GitHub',
@@ -1105,7 +1360,8 @@ bot.help(async ctx => {
       '/issues owner/repo - открытые issues репозитория',
       '/pr owner/repo - открытые pull requests',
       '/stats - расходы на AI (токены, деньги, модели)',
-      '/provider - переключить провайдера (DeepSeek ↔ Perplexity)',
+      '/provider - переключить модель (DeepSeek / OpenRouter / MiniMax / Claude / Gemini / Grok / QwenCoder / R1 / Perplexity)',
+      '/auto - включить/выключить авто-выбор модели по типу запроса',
       '/model - показать текущую модель',
       '/onboarding - пройти настройку заново',
       '/setup - то же самое, что /onboarding',
@@ -1125,6 +1381,35 @@ bot.command('reset', async ctx => {
   await reply(ctx, 'Память этого чата очищена.');
 });
 
+bot.command('auto', async ctx => {
+  const current = chatAutoMode.get(ctx.chat.id) || false;
+  const next = !current;
+  chatAutoMode.set(ctx.chat.id, next);
+  if (next) {
+    await reply(ctx, [
+      'Авто-выбор модели включён.',
+      '',
+      'Маркетинг:',
+      '  Копирайтинг / реклама / тексты → Claude Sonnet',
+      '  Стратегия / анализ рынка / конкуренты → Gemini 2.5 Pro',
+      '  Посты для соцсетей / вирусный контент → Grok 3',
+      '',
+      'Код:',
+      '  Написать код / функцию / скрипт → Qwen Coder',
+      '  Проверить код / найти баг / debug → DeepSeek R1',
+      '',
+      'Другое:',
+      '  Длинные документы / таблицы → MiniMax M3',
+      '  Поиск в интернете → Perplexity',
+      '  Всё остальное → основной провайдер',
+      '',
+      'Отключить: /auto',
+    ].join('\n'));
+  } else {
+    await reply(ctx, `Авто-выбор выключен. Активен провайдер: ${getChatProvider(ctx.chat.id)}`);
+  }
+});
+
 bot.command(['onboarding', 'setup'], async ctx => {
   histories.delete(ctx.chat.id);
   await startOnboarding(ctx);
@@ -1140,20 +1425,264 @@ bot.command('model', async ctx => {
 
 bot.command('provider', async ctx => {
   const current = getChatProvider(ctx.chat.id);
-  const next = current === 'deepseek' ? 'perplexity' : 'deepseek';
+  const available = ['deepseek'];
+  if (openrouterApiKey) available.push('openrouter', 'minimax', 'claude', 'gemini', 'grok', 'qwen-coder', 'deepseek-r1');
+  if (perplexityApiKey) available.push('perplexity');
 
-  if (next === 'perplexity' && !perplexityApiKey) {
-    await reply(ctx, 'PERPLEXITY_API_KEY не настроен. Добавьте ключ в .env и перезапустите бота.');
-    return;
-  }
+  const idx = available.indexOf(current);
+  const next = available[(idx + 1) % available.length];
 
   setChatProvider(ctx.chat.id, next);
   histories.delete(ctx.chat.id);
 
-  const label = next === 'perplexity'
-    ? `Perplexity AI (${perplexityModel})`
-    : `DeepSeek (${deepseekModel})`;
-  await reply(ctx, `Переключено на ${label}. История чата очищена.`);
+  const labels = {
+    deepseek:      `DeepSeek (${deepseekModel})`,
+    openrouter:    `OpenRouter / DeepSeek (${openrouterModel})`,
+    minimax:       `MiniMax M3 (${minimaxModel})`,
+    claude:        `Claude Sonnet (${claudeModel})`,
+    gemini:        `Google Gemini (${geminiModel})`,
+    grok:          `xAI Grok (${grokModel})`,
+    'qwen-coder':  `Qwen Coder (${qwenCoderModel})`,
+    'deepseek-r1': `DeepSeek R1 / reasoning (${deepseekR1Model})`,
+    perplexity:    `Perplexity AI (${perplexityModel})`,
+  };
+  await reply(ctx, `Переключено на ${labels[next]}. История чата очищена.`);
+});
+
+async function replicatePredict(model, input) {
+  const createRes = await fetch(`${replicateBaseUrl}/models/${model}/predictions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${replicateApiKey}`,
+      'Content-Type': 'application/json',
+      Prefer: 'wait=60',
+    },
+    body: JSON.stringify({ input }),
+    signal: AbortSignal.timeout(70000),
+  });
+
+  const prediction = await createRes.json();
+  if (!createRes.ok) throw new Error(`Replicate ${createRes.status}: ${prediction?.detail || JSON.stringify(prediction)}`);
+  if (prediction.status === 'succeeded') return prediction.output;
+  if (prediction.status === 'failed') throw new Error(`Replicate failed: ${prediction.error}`);
+
+  const id = prediction.id;
+  for (let i = 0; i < 72; i++) {
+    await delay(5000);
+    const pollRes = await fetch(`${replicateBaseUrl}/predictions/${id}`, {
+      headers: { Authorization: `Bearer ${replicateApiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    const poll = await pollRes.json();
+    if (poll.status === 'succeeded') return poll.output;
+    if (poll.status === 'failed' || poll.status === 'canceled') throw new Error(`Replicate: ${poll.error || poll.status}`);
+  }
+  throw new Error('Replicate: таймаут генерации (6 минут)');
+}
+
+async function enhanceImagePrompt(userPrompt) {
+  const res = await fetch(`${openrouterBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${openrouterApiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://github.com/hermes-bot',
+      'X-Title': 'Hermes Bot',
+    },
+    body: JSON.stringify({
+      model: openrouterModel,
+      messages: [{
+        role: 'user',
+        content: `You are an expert at writing image generation prompts for FLUX AI model.
+Translate and enhance this prompt into English for FLUX. Make it detailed and descriptive.
+Add: lighting details, camera angle, style, mood, quality keywords.
+Return ONLY the enhanced English prompt, nothing else, no explanations.
+
+User prompt: "${userPrompt}"`,
+      }],
+      max_tokens: 300,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const json = await res.json();
+  return json?.choices?.[0]?.message?.content?.trim() || userPrompt;
+}
+
+bot.command('image', async ctx => {
+  const userPrompt = ctx.message.text.replace(/^\/image\s*/i, '').trim();
+  if (!userPrompt) {
+    await reply(ctx, 'Укажи описание после команды.\nПример: /image сочный стейк рибай на гриле');
+    return;
+  }
+  if (!replicateApiKey) {
+    await reply(ctx, 'REPLICATE_API_KEY не настроен.');
+    return;
+  }
+  await sendChatAction(ctx, 'upload_photo');
+  await reply(ctx, '⏳ Улучшаю промпт и генерирую изображение...');
+  try {
+    const enhancedPrompt = await enhanceImagePrompt(userPrompt);
+    console.log(`Image prompt: "${userPrompt}" → "${enhancedPrompt}"`);
+
+    const output = await replicatePredict(imageModel, {
+      prompt: enhancedPrompt,
+      aspect_ratio: '1:1',
+      output_format: 'jpg',
+      safety_tolerance: 2,
+    });
+    const url = Array.isArray(output) ? output[0] : output;
+    await ctx.replyWithPhoto(url, { caption: `FLUX 1.1 Pro Ultra\n📝 ${userPrompt}` });
+  } catch (e) {
+    console.error('Replicate /image failed:', e);
+    await reply(ctx, `Не удалось сгенерировать изображение: ${e.message}`);
+  }
+});
+
+bot.command('video', async ctx => {
+  const prompt = ctx.message.text.replace(/^\/video\s*/i, '').trim();
+  if (!prompt) {
+    await reply(ctx, 'Укажи описание после команды.\nПример: /video рассвет над морем, кинематографично');
+    return;
+  }
+  if (!replicateApiKey) {
+    await reply(ctx, 'REPLICATE_API_KEY не настроен.');
+    return;
+  }
+  await reply(ctx, '⏳ Генерирую видео через MiniMax Video-01... это займёт 2-4 минуты.');
+  try {
+    const output = await replicatePredict(videoModel, {
+      prompt,
+      prompt_optimizer: true,
+    });
+    const url = Array.isArray(output) ? output[0] : output;
+    try {
+      await ctx.replyWithVideo(url, { caption: `MiniMax Video-01\n${prompt.slice(0, 200)}` });
+    } catch {
+      await reply(ctx, `Видео готово:\n${url}`);
+    }
+  } catch (e) {
+    console.error('Replicate /video failed:', e);
+    await reply(ctx, `Не удалось сгенерировать видео: ${e.message}`);
+  }
+});
+
+async function getTelegramPhotoUrl(ctx, photoArray) {
+  const photo = photoArray[photoArray.length - 1];
+  const file = await ctx.telegram.getFile(photo.file_id);
+  return `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+}
+
+// Download Telegram photo using https.get (reliable for binary)
+function downloadUrl(url) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const get = (u) => {
+      const mod = u.startsWith('https') ? https : require('http');
+      mod.get(u, res => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return get(res.headers.location);
+        }
+        if (res.statusCode !== 200) return reject(new Error(`Download failed: ${res.statusCode}`));
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject);
+    };
+    get(url);
+  });
+}
+
+// Download Telegram photo and return as base64 data URL (no external hosting needed)
+async function uploadTelegramPhotoToReplicate(ctx, photoArray) {
+  const tgUrl = await getTelegramPhotoUrl(ctx, photoArray);
+  const imageBuffer = await downloadUrl(tgUrl);
+  return `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+}
+
+async function animateImage(imageUrl, prompt) {
+  const DEFAULT_PROMPT = 'cinematic animation, smooth natural motion, high quality';
+  const safePrompt = (prompt && prompt.trim().length >= 3) ? prompt.trim() : DEFAULT_PROMPT;
+  return replicatePredict(animateModel, {
+    start_image: imageUrl,
+    prompt: safePrompt,
+    duration: 5,
+    aspect_ratio: '16:9',
+  });
+}
+
+// /animate — работает тремя способами:
+// 1. Реплай на фото + /animate
+// 2. Просто /animate — берёт последнее присланное фото
+// 3. Фото с подписью "оживи" (обрабатывается в photo-хэндлере)
+bot.command('animate', async ctx => {
+  if (!replicateApiKey) {
+    await reply(ctx, 'REPLICATE_API_KEY не настроен.');
+    return;
+  }
+
+  const promptText = ctx.message.text.replace(/^\/animate\s*/i, '').trim();
+
+  // Source 1: reply to a photo
+  const photoArray = ctx.message.reply_to_message?.photo
+    // Source 2: last photo sent in this chat
+    ?? lastPhotos.get(ctx.chat.id);
+
+  if (!photoArray) {
+    await reply(ctx, 'Сначала отправь фото, затем напиши /animate');
+    return;
+  }
+
+  await reply(ctx, '⏳ Оживляю картинку через Luma Ray 3.2... займёт 2-3 минуты.');
+  try {
+    const imageUrl = await uploadTelegramPhotoToReplicate(ctx, photoArray);
+    const output = await animateImage(imageUrl, promptText || undefined);
+    const url = Array.isArray(output) ? output[0] : output;
+    try {
+      await ctx.replyWithVideo(url, { caption: `Luma Ray 3.2\n${promptText || 'авто-анимация'}` });
+    } catch {
+      await reply(ctx, `Видео готово:\n${url}`);
+    }
+  } catch (e) {
+    console.error('Animate failed:', e);
+    await reply(ctx, `Не удалось оживить картинку: ${e.message}`);
+  }
+});
+
+// Входящее фото — сохраняем и предлагаем анимировать
+bot.on('photo', async ctx => {
+  if (!isAuthorized(ctx)) return;
+
+  // Always remember the last photo for this chat
+  lastPhotos.set(ctx.chat.id, ctx.message.photo);
+
+  const caption = ctx.message.caption?.toLowerCase() || '';
+  const shouldAnimate = /оживи|анимируй|animate|сделай видео из|в видео/.test(caption);
+
+  if (shouldAnimate && replicateApiKey) {
+    const promptText = ctx.message.caption
+      ?.replace(/оживи|анимируй|animate|сделай видео из|в видео/gi, '')
+      .trim();
+    await reply(ctx, '⏳ Оживляю картинку через Luma Ray 3.2...');
+    try {
+      const imageUrl = await uploadTelegramPhotoToReplicate(ctx, ctx.message.photo);
+      const output = await animateImage(imageUrl, promptText || undefined);
+      const url = Array.isArray(output) ? output[0] : output;
+      try {
+        await ctx.replyWithVideo(url, { caption: `Luma Ray 3.2` });
+      } catch {
+        await reply(ctx, `Видео готово:\n${url}`);
+      }
+    } catch (e) {
+      console.error('Animate from photo failed:', e);
+      await reply(ctx, `Не удалось оживить картинку: ${e.message}`);
+    }
+    return;
+  }
+
+  // Hint
+  if (replicateApiKey) {
+    await reply(ctx, 'Фото получено. Напиши /animate чтобы оживить его.');
+  }
 });
 
 async function firecrawlScrape(url) {
@@ -1290,7 +1819,15 @@ bot.command('health', async ctx => {
       `Telegram: polling`,
       `DeepSeek: подключен · модель ${deepseekModel}`,
       `Режим рассуждений: ${deepseekThinkingEnabled ? 'включен' : 'выключен'}`,
+      `OpenRouter: ${openrouterApiKey ? `подключен · ${openrouterModel}` : 'не настроен'}`,
+      `MiniMax M3: ${openrouterApiKey ? `подключен · ${minimaxModel} (через OpenRouter)` : 'не настроен'}`,
+      `Claude Sonnet: ${openrouterApiKey ? `подключен · ${claudeModel}` : 'не настроен'}`,
+      `Gemini 2.5 Pro: ${openrouterApiKey ? `подключен · ${geminiModel}` : 'не настроен'}`,
+      `Grok 3: ${openrouterApiKey ? `подключен · ${grokModel}` : 'не настроен'}`,
+      `Qwen Coder: ${openrouterApiKey ? `подключен · ${qwenCoderModel}` : 'не настроен'}`,
+      `DeepSeek R1: ${openrouterApiKey ? `подключен · ${deepseekR1Model}` : 'не настроен'}`,
       `Perplexity: ${perplexityApiKey ? `подключен · ${perplexityModel}` : 'не настроен'}`,
+      `Replicate: ${replicateApiKey ? `подключен · /image · /video · /animate (${animateModel})` : 'не настроен'}`,
       `Firecrawl: ${firecrawlApiKey ? 'подключен · /scrape доступен' : 'не настроен'}`,
       `GitHub: ${githubToken ? 'подключен · /myrepos /myissues /myprs' : 'без токена (только публичные repo)'}`,
       `Профиль: ${getProfile(ctx.chat.id) ? 'настроен' : 'не настроен'}`,
@@ -1302,6 +1839,22 @@ bot.action(/^onboarding_tone:(short|detailed|steps)$/, async ctx => {
   await answerCallback(ctx);
   await finishOnboarding(ctx, ctx.match[1]);
 });
+
+function isImageRequest(message) {
+  const t = message.toLowerCase();
+  return /^(нарисуй|нарисовать|сгенерируй|сгенерировать|создай картинку|создай изображение|сделай картинку|сделай изображение|покажи картинку|покажи фото|генерируй картинку|генерируй изображение|draw|generate image|create image|make image)\b/.test(t);
+}
+
+function isVideoRequest(message) {
+  const t = message.toLowerCase();
+  return /^(сгенерируй видео|создай видео|сделай видео|генерируй видео|generate video|create video|make video)\b/.test(t);
+}
+
+function extractMediaSubject(message) {
+  return message
+    .replace(/^(нарисуй|нарисовать|сгенерируй|сгенерировать|создай картинку|создай изображение|сделай картинку|сделай изображение|покажи картинку|покажи фото|генерируй картинку|генерируй изображение|сгенерируй видео|создай видео|сделай видео|генерируй видео|draw|generate image|create image|make image|generate video|create video|make video)\s*/i, '')
+    .trim() || message;
+}
 
 bot.on('text', async ctx => {
   const message = ctx.message.text.trim();
@@ -1325,13 +1878,55 @@ bot.on('text', async ctx => {
     return;
   }
 
+  // Перехват запросов на генерацию изображений
+  if (replicateApiKey && isImageRequest(message)) {
+    const subject = extractMediaSubject(message);
+    await sendChatAction(ctx, 'upload_photo');
+    await reply(ctx, '⏳ Улучшаю промпт и генерирую изображение...');
+    try {
+      const enhancedPrompt = await enhanceImagePrompt(subject);
+      console.log(`Image: "${subject}" → "${enhancedPrompt}"`);
+      const output = await replicatePredict(imageModel, {
+        prompt: enhancedPrompt,
+        aspect_ratio: '1:1',
+        output_format: 'jpg',
+        safety_tolerance: 2,
+      });
+      const url = Array.isArray(output) ? output[0] : output;
+      await ctx.replyWithPhoto(url, { caption: `FLUX 1.1 Pro Ultra\n📝 ${subject}` });
+    } catch (e) {
+      console.error('Image generation failed:', e);
+      await reply(ctx, `Не удалось сгенерировать изображение: ${e.message}`);
+    }
+    return;
+  }
+
+  // Перехват запросов на генерацию видео
+  if (replicateApiKey && isVideoRequest(message)) {
+    const subject = extractMediaSubject(message);
+    await reply(ctx, '⏳ Генерирую видео... это займёт 2-4 минуты.');
+    try {
+      const output = await replicatePredict(videoModel, { prompt: subject, prompt_optimizer: true });
+      const url = Array.isArray(output) ? output[0] : output;
+      try {
+        await ctx.replyWithVideo(url, { caption: `MiniMax Video-01\n📝 ${subject}` });
+      } catch {
+        await reply(ctx, `Видео готово:\n${url}`);
+      }
+    } catch (e) {
+      console.error('Video generation failed:', e);
+      await reply(ctx, `Не удалось сгенерировать видео: ${e.message}`);
+    }
+    return;
+  }
+
   await sendChatAction(ctx, 'typing');
 
   try {
     const answer = await askAI(ctx.chat.id, message);
     await replyLong(ctx, answer);
   } catch (error) {
-    console.error('DeepSeek request failed:', error);
+    console.error('AI request failed:', error);
     await reply(
       ctx,
       'Не смог получить ответ от AI-провайдера. Проверь ключ, баланс или лимиты API.',
