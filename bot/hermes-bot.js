@@ -1802,6 +1802,21 @@ async function uploadTelegramPhotoToReplicate(ctx, photoArray) {
   return `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
 }
 
+async function uploadTelegramVoiceToReplicate(ctx, fileId) {
+  const file = await ctx.telegram.getFile(fileId);
+  const tgUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+  const audioBuffer = await downloadUrl(tgUrl);
+  return `data:audio/ogg;base64,${audioBuffer.toString('base64')}`;
+}
+
+function extractTranscription(output) {
+  return (
+    typeof output === 'string' ? output :
+    Array.isArray(output) ? output[0] :
+    output?.text || ''
+  ).trim();
+}
+
 async function animateImage(imageUrl, prompt) {
   const DEFAULT_PROMPT = 'cinematic animation, smooth natural motion, high quality';
   const safePrompt = (prompt && prompt.trim().length >= 3) ? prompt.trim() : DEFAULT_PROMPT;
