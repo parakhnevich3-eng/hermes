@@ -1420,6 +1420,34 @@ bot.command('vopen', async ctx => {
   }
 });
 
+async function generateSiteContent(description) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    const response = await fetch(`${deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${deepseekApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: deepseekModel,
+        messages: [{ role: 'user', content: buildSitePrompt(description) }],
+        max_tokens: 8192,
+      }),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`DeepSeek ${response.status}`);
+    const payload = JSON.parse(text);
+    const answer = payload?.choices?.[0]?.message?.content?.trim();
+    if (!answer) throw new Error('Empty AI response');
+    return answer;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 bot.command('vdeploy', async ctx => {
   if (!vercelToken) {
     await reply(ctx, 'VERCEL_API_TOKEN не настроен.');
@@ -1438,12 +1466,7 @@ bot.command('vdeploy', async ctx => {
   await reply(ctx, `⏳ Генерирую сайт «${name}»...`);
 
   try {
-    const aiOutput = await askAI(ctx.chat.id, buildSitePrompt(description));
-
-    // Remove AI output from chat history — one-shot generation, not Q&A
-    const hist = getChatHistory(ctx.chat.id);
-    hist.splice(-2, 2);
-
+    const aiOutput = await generateSiteContent(description);
     const { html, css } = parseSiteOutput(aiOutput);
 
     if (!html) {
