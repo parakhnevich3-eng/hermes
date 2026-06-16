@@ -11,12 +11,30 @@ function parseVdeployArgs(text) {
 }
 
 function buildSitePrompt(description) {
-  return `Создай современный одностраничный сайт на тему: "${description}"
+  return `Создай красивый одностраничный сайт специально на тему: "${description}"
 
-Верни ТОЛЬКО код, без пояснений, без markdown-блоков:
-[полный index.html — в <head> обязательно: <link rel="stylesheet" href="/style.css">]
+Требования:
+- Уникальный дизайн, подходящий теме. Не используй шаблоны.
+- В <head> обязательно: <meta charset="UTF-8"> и <link rel="stylesheet" href="/style.css">
+- Весь CSS — в отдельном файле style.css, не inline и не в <style>
+
+Верни ТОЛЬКО код в точном формате ниже (без пояснений, без markdown-блоков вроде \`\`\`):
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/style.css">
+  <title>...</title>
+</head>
+<body>
+  <!-- контент сайта -->
+</body>
+</html>
 --- STYLE.CSS ---
-[полный style.css]`;
+/* стили */
+body { ... }`;
 }
 
 function parseSiteOutput(output) {
