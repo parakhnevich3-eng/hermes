@@ -6,11 +6,11 @@ function buildVoiceDataUrl(buffer) {
   return `data:audio/ogg;base64,${buffer.toString('base64')}`;
 }
 
-// Mirrors extractTranscription() that will be added to hermes-bot.js
+// Mirrors extractTranscription() in hermes-bot.js
 function extractTranscription(output) {
   return (
     typeof output === 'string' ? output :
-    Array.isArray(output) ? output[0] :
+    Array.isArray(output) ? (output[0] ?? '') :
     output?.text || ''
   ).trim();
 }
@@ -50,5 +50,10 @@ describe('extractTranscription', () => {
     expect(extractTranscription(null)).toBe('');
     expect(extractTranscription(undefined)).toBe('');
     expect(extractTranscription({ text: '' })).toBe('');
+    expect(extractTranscription({ text: null })).toBe('');
+  });
+
+  it('returns empty string for empty array', () => {
+    expect(extractTranscription([])).toBe('');
   });
 });

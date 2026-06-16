@@ -1812,7 +1812,7 @@ async function uploadTelegramVoiceToReplicate(ctx, fileId) {
 function extractTranscription(output) {
   return (
     typeof output === 'string' ? output :
-    Array.isArray(output) ? output[0] :
+    Array.isArray(output) ? (output[0] ?? '') :
     output?.text || ''
   ).trim();
 }
