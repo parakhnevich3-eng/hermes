@@ -1963,6 +1963,84 @@ bot.on('voice', async ctx => {
   }
 });
 
+const SUPPORTED_DOC_MIMES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
+const DOC_WORD_LIMIT = 15000;
+const DOC_SIZE_LIMIT = 20 * 1024 * 1024; // 20 MB
+
+bot.on('document', async ctx => {
+  if (!isAuthorized(ctx)) return;
+
+  if (onboardingStates.has(ctx.chat.id)) {
+    await reply(ctx, 'Сейчас идёт онбординг. Ответьте на вопрос текстом.');
+    return;
+  }
+
+  if (!getProfile(ctx.chat.id)) {
+    await startOnboarding(ctx);
+    return;
+  }
+
+  const doc = ctx.message.document;
+  const mimeType = doc.mime_type || '';
+
+  if (!SUPPORTED_DOC_MIMES.has(mimeType)) {
+    await reply(ctx, 'Формат не поддерживается. Пришли PDF, Word (.docx) или Excel (.xlsx).');
+    return;
+  }
+
+  if (doc.file_size > DOC_SIZE_LIMIT) {
+    await reply(ctx, 'Файл слишком большой (максимум 20 МБ).');
+    return;
+  }
+
+  docContexts.delete(ctx.chat.id); // clear previous doc when new one arrives
+
+  await sendChatAction(ctx, 'typing');
+  await reply(ctx, '📄 Читаю документ...');
+
+  try {
+    const file = await ctx.telegram.getFile(doc.file_id);
+    const tgUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    const buffer = await downloadUrl(tgUrl);
+
+    const rawText = await parseDocument(buffer, mimeType);
+
+    if (!rawText || !rawText.trim()) {
+      await reply(ctx, 'Документ не содержит текста (возможно, это скан или защищённый файл).');
+      return;
+    }
+
+    const wordCount = countWords(rawText);
+    const isLarge = wordCount > DOC_WORD_LIMIT;
+    const text = isLarge ? truncateToWords(rawText, DOC_WORD_LIMIT) : rawText;
+    const fileName = doc.file_name || 'документ';
+
+    if (isLarge) {
+      await reply(ctx, `⚠️ Документ большой (~${wordCount} слов), анализирую первые ${DOC_WORD_LIMIT}.`);
+    }
+
+    console.log(`Document parsed: "${fileName}" (${wordCount} words, large=${isLarge})`);
+
+    // docContexts intentionally NOT set yet — text goes in user prompt only for this call
+    const prompt = `Кратко изложи содержание следующего документа:\n\n${text}`;
+    await sendChatAction(ctx, 'typing');
+    const summary = await askAI(ctx.chat.id, prompt);
+    await replyLong(ctx, `📝 Краткое содержание:\n\n${summary}`);
+
+    if (!isLarge) {
+      docContexts.set(ctx.chat.id, { text, fileName }); // enable Q&A after summary
+      await reply(ctx, '💬 Можешь задавать вопросы по документу.');
+    }
+  } catch (error) {
+    console.error('Document processing failed:', error);
+    await reply(ctx, 'Не удалось прочитать документ. Возможно, файл повреждён или защищён паролем.');
+  }
+});
+
 async function firecrawlScrape(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60000);
