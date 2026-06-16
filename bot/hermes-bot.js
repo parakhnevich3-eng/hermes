@@ -1903,6 +1903,42 @@ bot.on('photo', async ctx => {
   }
 });
 
+bot.on('voice', async ctx => {
+  if (!isAuthorized(ctx)) return;
+
+  if (!replicateApiKey) {
+    await reply(ctx, 'Голосовые сообщения не поддерживаются (REPLICATE_API_KEY не настроен).');
+    return;
+  }
+
+  if (!getProfile(ctx.chat.id)) {
+    await startOnboarding(ctx);
+    return;
+  }
+
+  await reply(ctx, '⏳ Транскрибирую...');
+
+  try {
+    const audioUrl = await uploadTelegramVoiceToReplicate(ctx, ctx.message.voice.file_id);
+    const output = await replicatePredict(voiceModel, { audio: audioUrl });
+    const transcription = extractTranscription(output);
+
+    if (!transcription) {
+      await reply(ctx, 'Не удалось распознать речь. Попробуй ещё раз или напиши текстом.');
+      return;
+    }
+
+    await reply(ctx, `🎤 Слышу: "${transcription}"`);
+    await sendChatAction(ctx, 'typing');
+
+    const answer = await askAI(ctx.chat.id, transcription);
+    await replyLong(ctx, answer);
+  } catch (error) {
+    console.error('Voice transcription failed:', error);
+    await reply(ctx, `Не удалось транскрибировать: ${error.message}`);
+  }
+});
+
 async function firecrawlScrape(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60000);
