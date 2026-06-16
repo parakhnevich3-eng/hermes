@@ -1916,6 +1916,11 @@ bot.on('voice', async ctx => {
     return;
   }
 
+  if (ctx.message.voice.duration > 300) {
+    await reply(ctx, 'Голосовое сообщение слишком длинное (максимум 5 минут).');
+    return;
+  }
+
   await reply(ctx, '⏳ Транскрибирую...');
 
   try {
@@ -1928,14 +1933,15 @@ bot.on('voice', async ctx => {
       return;
     }
 
-    await reply(ctx, `🎤 Слышу: "${transcription}"`);
+    console.log(`Voice transcribed (${ctx.message.voice.duration}s): "${transcription.slice(0, 80)}"`);
+    await reply(ctx, `🎤 Слышу: «${transcription}»`);
     await sendChatAction(ctx, 'typing');
 
     const answer = await askAI(ctx.chat.id, transcription);
     await replyLong(ctx, answer);
   } catch (error) {
     console.error('Voice transcription failed:', error);
-    await reply(ctx, `Не удалось транскрибировать: ${error.message}`);
+    await reply(ctx, 'Не удалось транскрибировать голосовое сообщение. Попробуй ещё раз.');
   }
 });
 
