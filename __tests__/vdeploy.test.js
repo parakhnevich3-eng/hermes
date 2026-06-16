@@ -1,4 +1,4 @@
-const { parseVdeployArgs, buildSitePrompt, parseSiteOutput } = require('../bot/vdeploy-utils');
+const { parseVdeployArgs, buildSitePrompt, parseSiteOutput, sanitizeProjectName } = require('../bot/vdeploy-utils');
 
 describe('parseVdeployArgs', () => {
   it('returns null for empty input', () => {
@@ -61,5 +61,32 @@ describe('buildSitePrompt', () => {
     expect(prompt).toContain('Сайт о ресторанах');
     expect(prompt).toContain('--- STYLE.CSS ---');
     expect(prompt).toContain('style.css');
+  });
+});
+
+describe('sanitizeProjectName', () => {
+  it('lowercases the name', () => {
+    expect(sanitizeProjectName('MyProject')).toBe('myproject');
+  });
+
+  it('replaces spaces and invalid chars with dashes', () => {
+    expect(sanitizeProjectName('my project!')).toBe('my-project');
+  });
+
+  it('collapses multiple dashes', () => {
+    expect(sanitizeProjectName('my--site')).toBe('my-site');
+    expect(sanitizeProjectName('a---b')).toBe('a-b');
+  });
+
+  it('trims leading and trailing dashes', () => {
+    expect(sanitizeProjectName('-my-site-')).toBe('my-site');
+  });
+
+  it('truncates to 100 characters', () => {
+    expect(sanitizeProjectName('a'.repeat(150))).toHaveLength(100);
+  });
+
+  it('falls back to my-site for empty result', () => {
+    expect(sanitizeProjectName('---')).toBe('my-site');
   });
 });

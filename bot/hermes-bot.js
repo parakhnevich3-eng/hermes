@@ -6,7 +6,7 @@ const https = require('https');
 const { inspect } = require('util');
 const { Telegraf } = require('telegraf');
 const { countWords, truncateToWords, parseDocument } = require('./document-utils');
-const { parseVdeployArgs, buildSitePrompt, parseSiteOutput } = require('./vdeploy-utils');
+const { parseVdeployArgs, buildSitePrompt, parseSiteOutput, sanitizeProjectName } = require('./vdeploy-utils');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
@@ -1432,7 +1432,8 @@ bot.command('vdeploy', async ctx => {
     return;
   }
 
-  const { name, description } = parsed;
+  const { name: rawName, description } = parsed;
+  const name = sanitizeProjectName(rawName);
   await sendChatAction(ctx, 'typing');
   await reply(ctx, `⏳ Генерирую сайт «${name}»...`);
 

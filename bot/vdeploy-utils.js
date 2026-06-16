@@ -34,4 +34,13 @@ function parseSiteOutput(output) {
   };
 }
 
-module.exports = { parseVdeployArgs, buildSitePrompt, parseSiteOutput };
+function sanitizeProjectName(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-._]+|[-._]+$/g, '')
+    .slice(0, 100) || 'my-site';
+}
+
+module.exports = { parseVdeployArgs, buildSitePrompt, parseSiteOutput, sanitizeProjectName };
