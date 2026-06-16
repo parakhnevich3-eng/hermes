@@ -6,6 +6,7 @@ const https = require('https');
 const { inspect } = require('util');
 const { Telegraf } = require('telegraf');
 const { countWords, truncateToWords, parseDocument } = require('./document-utils');
+const { parseVdeployArgs, buildSitePrompt, parseSiteOutput } = require('./vdeploy-utils');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
@@ -477,7 +478,7 @@ function buildSystemPrompt(chatId) {
     `/scrape <url> — скрапинг любой веб-страницы через Firecrawl API (${firecrawlApiKey ? 'подключён' : 'не настроен'});`,
     '/myrepos, /myissues, /myprs — GitHub интеграция (личные репозитории и задачи);',
     '/repo, /issues, /pr — публичные GitHub репозитории.',
-    `/vprojects — список проектов Vercel; /vdeploys — деплои; /vopen — URL проекта; /vdeploy <name> — задеплоить лендинг (Vercel ${vercelToken ? 'подключён' : 'не настроен'}).`,
+    `/vprojects — список проектов Vercel; /vdeploys — деплои; /vopen — URL проекта; /vdeploy <name> <описание> — AI-генерация и деплой сайта (Vercel ${vercelToken ? 'подключён' : 'не настроен'}).`,
     'Если пользователь спрашивает о Firecrawl, веб-скрапинге, Vercel или подключении к сервисам — отвечай на основе этих данных, не говори что ты не можешь делать запросы.',
   ].join(' ');
 
@@ -1424,71 +1425,49 @@ bot.command('vdeploy', async ctx => {
     await reply(ctx, 'VERCEL_API_TOKEN не настроен.');
     return;
   }
-  const args = ctx.message.text.replace(/^\/vdeploy\s*/i, '').trim();
-  if (!args) {
-    await reply(ctx, 'Укажи имя проекта.\nПример: /vdeploy hermes-landing');
+
+  const parsed = parseVdeployArgs(ctx.message.text);
+  if (!parsed) {
+    await reply(ctx, 'Укажи имя и описание.\nПример: /vdeploy my-site Лендинг для кофейни, светлый стиль');
     return;
   }
+
+  const { name, description } = parsed;
   await sendChatAction(ctx, 'typing');
-  await reply(ctx, `⏳ Деплою ${args} на Vercel...`);
+  await reply(ctx, `⏳ Генерирую сайт «${name}»...`);
+
   try {
+    const aiOutput = await askAI(ctx.chat.id, buildSitePrompt(description));
+
+    // Remove AI output from chat history — one-shot generation, not Q&A
+    const hist = getChatHistory(ctx.chat.id);
+    hist.splice(-2, 2);
+
+    const { html, css } = parseSiteOutput(aiOutput);
+
+    if (!html) {
+      await reply(ctx, 'Не удалось сгенерировать сайт. Попробуй ещё раз.');
+      return;
+    }
+
+    const files = [{ file: 'index.html', data: html }];
+    if (css) files.push({ file: 'style.css', data: css });
+
     const data = await vercelFetch('/v13/deployments', {
       method: 'POST',
       body: JSON.stringify({
-        name: args,
-        files: [
-          {
-            file: 'index.html',
-            data: `<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Гермес — AI-ассистент в Telegram</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d0d0d;color:#f0f0f0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem}
-.card{max-width:600px;text-align:center}
-.logo{font-size:4rem;margin-bottom:1rem}
-h1{font-size:2.5rem;font-weight:700;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:0.5rem}
-.sub{color:#888;font-size:1.1rem;margin-bottom:2rem}
-.features{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:2rem;text-align:left}
-.feat{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:1rem}
-.feat-icon{font-size:1.5rem;margin-bottom:0.4rem}
-.feat h3{font-size:0.9rem;color:#a78bfa;margin-bottom:0.2rem}
-.feat p{font-size:0.8rem;color:#888}
-.btn{display:inline-block;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;text-decoration:none;padding:0.9rem 2.5rem;border-radius:50px;font-size:1rem;font-weight:600;transition:opacity 0.2s}
-.btn:hover{opacity:0.85}
-.powered{margin-top:1.5rem;font-size:0.75rem;color:#555}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo">🪽</div>
-  <h1>Гермес</h1>
-  <p class="sub">Умный AI-ассистент прямо в Telegram</p>
-  <div class="features">
-    <div class="feat"><div class="feat-icon">🧠</div><h3>8 AI-моделей</h3><p>DeepSeek, Claude, Gemini, Grok, Perplexity и другие</p></div>
-    <div class="feat"><div class="feat-icon">🔍</div><h3>Поиск в сети</h3><p>Актуальные данные через Perplexity с источниками</p></div>
-    <div class="feat"><div class="feat-icon">🎨</div><h3>Генерация медиа</h3><p>Картинки FLUX, видео MiniMax, анимация Luma</p></div>
-    <div class="feat"><div class="feat-icon">⚡</div><h3>Авто-режим</h3><p>Автоматический выбор лучшей модели под задачу</p></div>
-  </div>
-  <a class="btn" href="https://t.me/andrei4eg_bot">Открыть в Telegram</a>
-  <p class="powered">Powered by OpenRouter · Replicate · Firecrawl · Vercel</p>
-</div>
-</body>
-</html>`,
-          },
-        ],
+        name,
+        files,
         projectSettings: { framework: null },
         target: 'production',
       }),
     });
 
     const deployUrl = `https://${data.url}`;
-    await reply(ctx, `✅ Деплой запущен!\n\n${data.name}\n${deployUrl}\n\nСтатус: ${data.readyState || 'BUILDING'}`);
-  } catch (e) {
-    await reply(ctx, `Не удалось задеплоить: ${e.message}`);
+    await reply(ctx, `✅ Сайт задеплоен!\n\n${data.name}\n${deployUrl}\n\nСтатус: ${data.readyState || 'BUILDING'}`);
+  } catch (error) {
+    console.error('vdeploy failed:', error);
+    await reply(ctx, 'Не удалось задеплоить на Vercel. Попробуй ещё раз.');
   }
 });
 
@@ -1574,7 +1553,7 @@ bot.help(async ctx => {
       '/vprojects - список проектов на Vercel',
       '/vdeploys [project] - последние деплои',
       '/vopen [project] - URL проекта',
-      '/vdeploy <name> - задеплоить лендинг Гермеса',
+      '/vdeploy <name> <описание> - сгенерировать и задеплоить сайт (AI + Vercel)',
       '/stats - расходы на AI (токены, деньги, модели)',
       '/provider - переключить модель (DeepSeek / OpenRouter / MiniMax / Claude / Gemini / Grok / QwenCoder / R1 / Perplexity)',
       '/auto - включить/выключить авто-выбор модели по типу запроса',
