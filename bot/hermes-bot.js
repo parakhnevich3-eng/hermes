@@ -2023,12 +2023,15 @@ bot.on('document', async ctx => {
       await reply(ctx, `⚠️ Документ большой (~${wordCount} слов), анализирую первые ${DOC_WORD_LIMIT}.`);
     }
 
-    console.log(`Document parsed: "${fileName}" (${wordCount} words, large=${isLarge})`);
+    console.log(`Document parsed: "${fileName.replace(/[\r\n]/g, ' ')}" (${wordCount} words, large=${isLarge})`);
 
     // docContexts intentionally NOT set yet — text goes in user prompt only for this call
     const prompt = `Кратко изложи содержание следующего документа:\n\n${text}`;
     await sendChatAction(ctx, 'typing');
     const summary = await askAI(ctx.chat.id, prompt);
+    // Remove the summary exchange from history — the 15k-word prompt must not pollute Q&A
+    const hist = getChatHistory(ctx.chat.id);
+    hist.splice(-2, 2);
     await replyLong(ctx, `📝 Краткое содержание:\n\n${summary}`);
 
     if (!isLarge) {
