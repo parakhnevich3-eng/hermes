@@ -1907,6 +1907,11 @@ bot.on('photo', async ctx => {
 bot.on('voice', async ctx => {
   if (!isAuthorized(ctx)) return;
 
+  if (onboardingStates.has(ctx.chat.id)) {
+    await reply(ctx, 'Сейчас идёт онбординг. Ответьте на вопрос текстом.');
+    return;
+  }
+
   if (!replicateApiKey) {
     await reply(ctx, 'Голосовые сообщения не поддерживаются (REPLICATE_API_KEY не настроен).');
     return;
@@ -1922,6 +1927,7 @@ bot.on('voice', async ctx => {
     return;
   }
 
+  await sendChatAction(ctx, 'typing');
   await reply(ctx, '⏳ Транскрибирую...');
 
   try {
