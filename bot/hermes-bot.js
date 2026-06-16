@@ -53,6 +53,7 @@ const onboardingStates = new Map();
 const chatProviders = new Map();
 const chatAutoMode = new Map();
 const lastPhotos = new Map(); // chatId → photo array (last received)
+const docContexts = new Map(); // chatId → { text, fileName }
 const telegramOutbox = [];
 let telegramOutboxTimer = null;
 const maxHistoryMessages = 12;
@@ -515,10 +516,15 @@ function buildSystemPrompt(chatId) {
     return [base, 'Если пользователь выглядит новым, мягко предложи команду /onboarding.'].join(' ');
   }
 
+  const docCtx = docContexts.get(chatId);
+  const docSection = docCtx
+    ? `\n\nКонтекст документа (файл: ${docCtx.fileName}):\n${docCtx.text}\n---\nПользователь может задавать вопросы по этому документу.`
+    : '';
+
   return [
     base,
     `Профиль пользователя: имя - ${profile.name || 'не указано'}; основные задачи - ${profile.focus || 'не указано'}; стиль ответов - ${profile.tone || 'не указано'}.`,
-  ].join(' ');
+  ].join(' ') + docSection;
 }
 
 function getUserId(ctx) {
