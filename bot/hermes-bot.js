@@ -28,11 +28,15 @@ const replicateApiKey  = process.env.REPLICATE_API_KEY;
 const imageModel       = process.env.IMAGE_MODEL   || 'black-forest-labs/flux-1.1-pro-ultra';
 const videoModel       = process.env.VIDEO_MODEL   || 'minimax/video-01';
 const animateModel     = process.env.ANIMATE_MODEL || 'luma/ray-3.2';
+const voiceModel       = process.env.VOICE_MODEL   || 'vaibhavs10/incredibly-fast-whisper';
 const replicateBaseUrl = 'https://api.replicate.com/v1';
 const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
 const firecrawlBaseUrl = 'https://api.firecrawl.dev';
 const githubToken = process.env.GITHUB_TOKEN;
 const githubBaseUrl = 'https://api.github.com';
+const vercelToken = process.env.VERCEL_API_TOKEN;
+const vercelTeamId = process.env.VERCEL_TEAM_ID;
+const vercelBaseUrl = 'https://api.vercel.com';
 const deepseekThinkingEnabled = ['1', 'true', 'yes'].includes(
   (process.env.DEEPSEEK_THINKING || '').toLowerCase(),
 );
@@ -471,13 +475,33 @@ function buildSystemPrompt(chatId) {
     `/scrape <url> — скрапинг любой веб-страницы через Firecrawl API (${firecrawlApiKey ? 'подключён' : 'не настроен'});`,
     '/myrepos, /myissues, /myprs — GitHub интеграция (личные репозитории и задачи);',
     '/repo, /issues, /pr — публичные GitHub репозитории.',
-    'Если пользователь спрашивает о Firecrawl, веб-скрапинге или подключении к сервисам — отвечай на основе этих данных, не говори что ты не можешь делать запросы.',
+    `/vprojects — список проектов Vercel; /vdeploys — деплои; /vopen — URL проекта; /vdeploy <name> — задеплоить лендинг (Vercel ${vercelToken ? 'подключён' : 'не настроен'}).`,
+    'Если пользователь спрашивает о Firecrawl, веб-скрапинге, Vercel или подключении к сервисам — отвечай на основе этих данных, не говори что ты не можешь делать запросы.',
   ].join(' ');
+
+  const autoMode = chatAutoMode.get(chatId) || false;
+  const autoStatus = autoMode
+    ? [
+        'АВТО-ВЫБОР МОДЕЛИ ВКЛЮЧЁН (/auto активен).',
+        'Текущий запрос автоматически маршрутизируется к лучшей модели по типу задачи:',
+        'копирайтинг/реклама → Claude Sonnet;',
+        'стратегия/аналитика рынка → Gemini;',
+        'посты для соцсетей → Grok;',
+        'написание кода → Qwen Coder;',
+        'отладка/ревью кода → DeepSeek R1;',
+        'длинные документы → MiniMax;',
+        'поиск в интернете → Perplexity;',
+        'всё остальное → основной провайдер.',
+        'Эта маршрутизация реализована ВНУТРИ ГЕРМЕСА на уровне кода бота — не через OpenRouter auto-routing.',
+        'Если пользователь спрашивает про автовыбор, отвечай что он ВКЛЮЧЁН командой /auto и работает по описанным правилам.',
+      ].join(' ')
+    : 'Авто-выбор модели ВЫКЛЮЧЕН (команда /auto). Все запросы идут через фиксированный провайдер: ' + provider + '. Пользователь может включить авто-режим командой /auto.';
 
   const base = [
     'Ты Гермес, дружелюбный Telegram-помощник.',
     'Гермес - это имя продукта, а не роль: не отыгрывай мифологического персонажа и не используй обращения вроде "смертный".',
     identity,
+    autoStatus,
     tools,
     'Если пользователь спрашивает, какая ты модель или кто под капотом, отвечай именно этой информацией.',
     'Никогда не называй себя Claude, Anthropic, ChatGPT или OpenAI-моделью.',
@@ -1282,6 +1306,181 @@ bot.command('pr', async ctx => {
   }
 });
 
+async function vercelFetch(path, options = {}) {
+  const url = new URL(`${vercelBaseUrl}${path}`);
+  if (vercelTeamId) url.searchParams.set('teamId', vercelTeamId);
+
+  const response = await fetch(url.toString(), {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${vercelToken}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Vercel ${response.status}: ${text}`);
+  return JSON.parse(text);
+}
+
+bot.command('vprojects', async ctx => {
+  if (!vercelToken) {
+    await reply(ctx, 'VERCEL_API_TOKEN не настроен. Добавьте токен в .env.');
+    return;
+  }
+  await sendChatAction(ctx, 'typing');
+  try {
+    const data = await vercelFetch('/v9/projects?limit=20');
+    const projects = data.projects || [];
+    if (projects.length === 0) {
+      await reply(ctx, 'Проектов на Vercel нет. Создайте первый через /vdeploy.');
+      return;
+    }
+    const lines = ['Проекты на Vercel:\n'];
+    for (const p of projects) {
+      const domain = p.alias?.[0]?.domain || `${p.name}.vercel.app`;
+      lines.push(`• ${p.name}\n  https://${domain}`);
+    }
+    await reply(ctx, lines.join('\n'));
+  } catch (e) {
+    await reply(ctx, `Ошибка Vercel: ${e.message}`);
+  }
+});
+
+bot.command('vdeploys', async ctx => {
+  if (!vercelToken) {
+    await reply(ctx, 'VERCEL_API_TOKEN не настроен.');
+    return;
+  }
+  const projectName = ctx.message.text.replace(/^\/vdeploys\s*/i, '').trim();
+  await sendChatAction(ctx, 'typing');
+  try {
+    const path = projectName
+      ? `/v6/deployments?app=${encodeURIComponent(projectName)}&limit=5`
+      : '/v6/deployments?limit=5';
+    const data = await vercelFetch(path);
+    const deploys = data.deployments || [];
+    if (deploys.length === 0) {
+      await reply(ctx, 'Деплоев не найдено.');
+      return;
+    }
+    const stateEmoji = s => ({ READY: '✅', ERROR: '❌', BUILDING: '🔄', CANCELED: '⏹' }[s] || '❓');
+    const lines = ['Последние деплои:\n'];
+    for (const d of deploys) {
+      const date = new Date(d.createdAt).toLocaleDateString('ru');
+      lines.push(`${stateEmoji(d.state)} ${d.name} · ${d.state} · ${date}\n  https://${d.url}`);
+    }
+    await reply(ctx, lines.join('\n'));
+  } catch (e) {
+    await reply(ctx, `Ошибка Vercel: ${e.message}`);
+  }
+});
+
+bot.command('vopen', async ctx => {
+  if (!vercelToken) {
+    await reply(ctx, 'VERCEL_API_TOKEN не настроен.');
+    return;
+  }
+  const projectName = ctx.message.text.replace(/^\/vopen\s*/i, '').trim();
+  await sendChatAction(ctx, 'typing');
+  try {
+    if (projectName) {
+      const data = await vercelFetch(`/v9/projects/${encodeURIComponent(projectName)}`);
+      const domain = data.alias?.[0]?.domain || `${data.name}.vercel.app`;
+      await reply(ctx, `${data.name}\nhttps://${domain}`);
+    } else {
+      const data = await vercelFetch('/v9/projects?limit=5');
+      const projects = data.projects || [];
+      if (projects.length === 0) {
+        await reply(ctx, 'Проектов нет.');
+        return;
+      }
+      const lines = projects.map(p => {
+        const domain = p.alias?.[0]?.domain || `${p.name}.vercel.app`;
+        return `• ${p.name}: https://${domain}`;
+      });
+      await reply(ctx, lines.join('\n'));
+    }
+  } catch (e) {
+    await reply(ctx, `Ошибка Vercel: ${e.message}`);
+  }
+});
+
+bot.command('vdeploy', async ctx => {
+  if (!vercelToken) {
+    await reply(ctx, 'VERCEL_API_TOKEN не настроен.');
+    return;
+  }
+  const args = ctx.message.text.replace(/^\/vdeploy\s*/i, '').trim();
+  if (!args) {
+    await reply(ctx, 'Укажи имя проекта.\nПример: /vdeploy hermes-landing');
+    return;
+  }
+  await sendChatAction(ctx, 'typing');
+  await reply(ctx, `⏳ Деплою ${args} на Vercel...`);
+  try {
+    const data = await vercelFetch('/v13/deployments', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: args,
+        files: [
+          {
+            file: 'index.html',
+            data: `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Гермес — AI-ассистент в Telegram</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d0d0d;color:#f0f0f0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem}
+.card{max-width:600px;text-align:center}
+.logo{font-size:4rem;margin-bottom:1rem}
+h1{font-size:2.5rem;font-weight:700;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:0.5rem}
+.sub{color:#888;font-size:1.1rem;margin-bottom:2rem}
+.features{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:2rem;text-align:left}
+.feat{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:1rem}
+.feat-icon{font-size:1.5rem;margin-bottom:0.4rem}
+.feat h3{font-size:0.9rem;color:#a78bfa;margin-bottom:0.2rem}
+.feat p{font-size:0.8rem;color:#888}
+.btn{display:inline-block;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;text-decoration:none;padding:0.9rem 2.5rem;border-radius:50px;font-size:1rem;font-weight:600;transition:opacity 0.2s}
+.btn:hover{opacity:0.85}
+.powered{margin-top:1.5rem;font-size:0.75rem;color:#555}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🪽</div>
+  <h1>Гермес</h1>
+  <p class="sub">Умный AI-ассистент прямо в Telegram</p>
+  <div class="features">
+    <div class="feat"><div class="feat-icon">🧠</div><h3>8 AI-моделей</h3><p>DeepSeek, Claude, Gemini, Grok, Perplexity и другие</p></div>
+    <div class="feat"><div class="feat-icon">🔍</div><h3>Поиск в сети</h3><p>Актуальные данные через Perplexity с источниками</p></div>
+    <div class="feat"><div class="feat-icon">🎨</div><h3>Генерация медиа</h3><p>Картинки FLUX, видео MiniMax, анимация Luma</p></div>
+    <div class="feat"><div class="feat-icon">⚡</div><h3>Авто-режим</h3><p>Автоматический выбор лучшей модели под задачу</p></div>
+  </div>
+  <a class="btn" href="https://t.me/andrei4eg_bot">Открыть в Telegram</a>
+  <p class="powered">Powered by OpenRouter · Replicate · Firecrawl · Vercel</p>
+</div>
+</body>
+</html>`,
+          },
+        ],
+        projectSettings: { framework: null },
+        target: 'production',
+      }),
+    });
+
+    const deployUrl = `https://${data.url}`;
+    await reply(ctx, `✅ Деплой запущен!\n\n${data.name}\n${deployUrl}\n\nСтатус: ${data.readyState || 'BUILDING'}`);
+  } catch (e) {
+    await reply(ctx, `Не удалось задеплоить: ${e.message}`);
+  }
+});
+
 bot.command('whoami', async ctx => {
   const user = ctx.from;
   await reply(
@@ -1359,6 +1558,10 @@ bot.help(async ctx => {
       '/repo owner/repo - информация о любом репозитории GitHub',
       '/issues owner/repo - открытые issues репозитория',
       '/pr owner/repo - открытые pull requests',
+      '/vprojects - список проектов на Vercel',
+      '/vdeploys [project] - последние деплои',
+      '/vopen [project] - URL проекта',
+      '/vdeploy <name> - задеплоить лендинг Гермеса',
       '/stats - расходы на AI (токены, деньги, модели)',
       '/provider - переключить модель (DeepSeek / OpenRouter / MiniMax / Claude / Gemini / Grok / QwenCoder / R1 / Perplexity)',
       '/auto - включить/выключить авто-выбор модели по типу запроса',
@@ -1830,6 +2033,7 @@ bot.command('health', async ctx => {
       `Replicate: ${replicateApiKey ? `подключен · /image · /video · /animate (${animateModel})` : 'не настроен'}`,
       `Firecrawl: ${firecrawlApiKey ? 'подключен · /scrape доступен' : 'не настроен'}`,
       `GitHub: ${githubToken ? 'подключен · /myrepos /myissues /myprs' : 'без токена (только публичные repo)'}`,
+      `Vercel: ${vercelToken ? 'подключен · /vprojects /vdeploys /vopen /vdeploy' : 'не настроен'}`,
       `Профиль: ${getProfile(ctx.chat.id) ? 'настроен' : 'не настроен'}`,
     ].join('\n'),
   );
