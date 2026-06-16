@@ -1,14 +1,5 @@
 // Unit tests for document parsing pure helpers.
-
-function countWords(text) {
-  return text.split(/\s+/).filter(Boolean).length;
-}
-
-function truncateToWords(text, maxWords) {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return text;
-  return words.slice(0, maxWords).join(' ');
-}
+const { countWords, truncateToWords } = require('../bot/document-utils');
 
 describe('countWords', () => {
   it('counts words in normal text', () => {
