@@ -513,12 +513,16 @@ function buildSystemPrompt(chatId) {
   const profile = getProfile(chatId);
 
   if (!profile) {
-    return [base, 'Если пользователь выглядит новым, мягко предложи команду /onboarding.'].join(' ');
+    const docCtxNoProfile = docContexts.get(chatId);
+    const docSectionNoProfile = docCtxNoProfile
+      ? `\n\n\u{1F4C4} НАЧАЛО ДОКУМЕНТА (файл: ${docCtxNoProfile.fileName.replace(/[\r\n]/g, ' ').slice(0, 200)})\n${docCtxNoProfile.text}\n\u{1F4C4} КОНЕЦ ДОКУМЕНТА\nПользователь может задавать вопросы по этому документу.`
+      : '';
+    return [base, 'Если пользователь выглядит новым, мягко предложи команду /onboarding.'].join(' ') + docSectionNoProfile;
   }
 
   const docCtx = docContexts.get(chatId);
   const docSection = docCtx
-    ? `\n\nКонтекст документа (файл: ${docCtx.fileName}):\n${docCtx.text}\n---\nПользователь может задавать вопросы по этому документу.`
+    ? `\n\n\u{1F4C4} НАЧАЛО ДОКУМЕНТА (файл: ${docCtx.fileName.replace(/[\r\n]/g, ' ').slice(0, 200)})\n${docCtx.text}\n\u{1F4C4} КОНЕЦ ДОКУМЕНТА\nПользователь может задавать вопросы по этому документу.`
     : '';
 
   return [
