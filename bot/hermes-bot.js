@@ -1559,6 +1559,7 @@ bot.help(async ctx => {
       '/ping - проверить, что бот живой',
       '/reset - очистить память этого чата',
       'голосовые сообщения — отправь голосовое, Гермес транскрибирует и ответит',
+      'документы — пришли PDF, Word (.docx) или Excel (.xlsx), Гермес прочитает и ответит на вопросы',
       '/image <описание> - сгенерировать изображение (FLUX 1.1 Pro Ultra)',
       '/video <описание> - сгенерировать видео (MiniMax Video-01)',
       '/animate [описание] - оживить фото (ответь на фото этой командой)',
@@ -1593,7 +1594,8 @@ bot.command('ping', async ctx => {
 
 bot.command('reset', async ctx => {
   histories.delete(ctx.chat.id);
-  await reply(ctx, 'Память этого чата очищена.');
+  docContexts.delete(ctx.chat.id);
+  await reply(ctx, 'Память и контекст документа очищены.');
 });
 
 bot.command('auto', async ctx => {
